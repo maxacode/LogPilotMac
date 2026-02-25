@@ -19,6 +19,9 @@ You can add any number of timers, see active timers with due times/countdown, an
 - Rollback by selecting a specific release tag/version
 
 ## Changelog
+- `v0.3.0`:
+  - Removed GitHub Actions workflow from the repository.
+  - Bumped app version to `0.3.0`.
 - `v0.2.2`:
   - Added update channel support: `main` and `dev`.
   - `main` channel checks stable GitHub releases.
