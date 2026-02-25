@@ -3,7 +3,7 @@
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Command,
     sync::mpsc,
     sync::{Arc, Mutex},
@@ -11,15 +11,15 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Duration as ChronoDuration, TimeZone, Utc, Weekday};
 use reqwest::blocking::Client;
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{Manager, State};
 use uuid::Uuid;
 
 const GITHUB_OWNER: &str = "maxacode";
-const GITHUB_REPO: &str = "LogPilotMac";
+const GITHUB_REPO: &str = "LockPilotMac";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,11 +38,27 @@ enum UpdateChannel {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum RecurrencePreset {
+    Daily,
+    Weekdays,
+    EveryNHours,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RecurrenceConfig {
+    preset: RecurrencePreset,
+    interval_hours: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TimerInfo {
     id: String,
     action: TimerAction,
     target_time: DateTime<Utc>,
+    recurrence: Option<RecurrenceConfig>,
     message: Option<String>,
     created_at: DateTime<Utc>,
 }
@@ -52,6 +68,7 @@ struct TimerInfo {
 struct CreateTimerRequest {
     action: TimerAction,
     target_time: String,
+    recurrence: Option<RecurrenceConfig>,
     message: Option<String>,
 }
 
@@ -60,9 +77,58 @@ struct TimerEntry {
     cancel_tx: mpsc::Sender<()>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct TimerStore {
     inner: Arc<Mutex<HashMap<String, TimerEntry>>>,
+    storage_path: Arc<PathBuf>,
+}
+
+impl TimerStore {
+    fn new(storage_path: PathBuf) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+            storage_path: Arc::new(storage_path),
+        }
+    }
+
+    fn persist(&self) -> Result<(), String> {
+        let locked = self
+            .inner
+            .lock()
+            .map_err(|_| "Failed to lock timer store".to_string())?;
+
+        let mut timers: Vec<TimerInfo> = locked.values().map(|entry| entry.info.clone()).collect();
+        timers.sort_by_key(|timer| timer.target_time);
+        drop(locked);
+
+        if let Some(parent) = self.storage_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create timer storage directory: {err}"))?;
+        }
+
+        let data = serde_json::to_string_pretty(&PersistedTimers { timers })
+            .map_err(|err| format!("Failed to encode timer data: {err}"))?;
+        fs::write(self.storage_path.as_ref(), data)
+            .map_err(|err| format!("Failed to write timer data: {err}"))?;
+        Ok(())
+    }
+
+    fn load_persisted_infos(&self) -> Result<Vec<TimerInfo>, String> {
+        if !self.storage_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let raw = fs::read_to_string(self.storage_path.as_ref())
+            .map_err(|err| format!("Failed to read timer data: {err}"))?;
+        let persisted = serde_json::from_str::<PersistedTimers>(&raw)
+            .map_err(|err| format!("Failed to parse timer data: {err}"))?;
+        Ok(persisted.timers)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedTimers {
+    timers: Vec<TimerInfo>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -121,6 +187,8 @@ fn cancel_timer(id: String, state: State<'_, TimerStore>) -> Result<bool, String
 
     if let Some(entry) = store.remove(&id) {
         let _ = entry.cancel_tx.send(());
+        drop(store);
+        state.persist()?;
         Ok(true)
     } else {
         Ok(false)
@@ -148,11 +216,15 @@ fn create_timer(request: CreateTimerRequest, state: State<'_, TimerStore>) -> Re
         return Err("Popup timers require a message".to_string());
     }
 
+    validate_recurrence(request.recurrence.as_ref())?;
+
     let id = Uuid::new_v4().to_string();
+    let recurrence = request.recurrence.clone();
     let info = TimerInfo {
         id: id.clone(),
         action: request.action,
         target_time: target,
+        recurrence: recurrence.clone(),
         message: request.message.map(|msg| msg.trim().to_string()),
         created_at: now,
     };
@@ -174,23 +246,72 @@ fn create_timer(request: CreateTimerRequest, state: State<'_, TimerStore>) -> Re
         );
     }
 
-    let store = state.inner.clone();
-    let task_info = info.clone();
-    thread::spawn(move || {
-        let wait = match (target - Utc::now()).to_std() {
-            Ok(duration) => duration,
-            Err(_) => Duration::from_secs(0),
-        };
-
-        if cancel_rx.recv_timeout(wait).is_err() {
-            run_action(&task_info.action, task_info.message.as_deref());
-            if let Ok(mut locked) = store.lock() {
-                locked.remove(&id);
-            }
-        }
-    });
+    state.persist()?;
+    schedule_timer_thread(
+        state.inner.clone(),
+        state.storage_path.as_ref(),
+        id.clone(),
+        target,
+        info.clone(),
+        recurrence,
+        cancel_rx,
+    );
 
     Ok(info)
+}
+
+fn schedule_timer_thread(
+    store: Arc<Mutex<HashMap<String, TimerEntry>>>,
+    storage_path: &Path,
+    id: String,
+    initial_target: DateTime<Utc>,
+    task_info: TimerInfo,
+    recurrence: Option<RecurrenceConfig>,
+    cancel_rx: mpsc::Receiver<()>,
+) {
+    let storage_path = storage_path.to_path_buf();
+    thread::spawn(move || {
+        let mut next_run = initial_target;
+        loop {
+            let wait = match (next_run - Utc::now()).to_std() {
+                Ok(duration) => duration,
+                Err(_) => Duration::from_secs(0),
+            };
+
+            if cancel_rx.recv_timeout(wait).is_ok() {
+                break;
+            }
+
+            run_action(&task_info.action, task_info.message.as_deref());
+
+            let Some(recurrence_cfg) = recurrence.as_ref() else {
+                if let Ok(mut locked) = store.lock() {
+                    locked.remove(&id);
+                }
+                let _ = persist_inner_store(&store, &storage_path);
+                break;
+            };
+
+            let computed_next = compute_next_run(next_run, recurrence_cfg);
+            let Some(updated_next) = computed_next else {
+                if let Ok(mut locked) = store.lock() {
+                    locked.remove(&id);
+                }
+                let _ = persist_inner_store(&store, &storage_path);
+                break;
+            };
+            next_run = updated_next;
+
+            if let Ok(mut locked) = store.lock() {
+                if let Some(entry) = locked.get_mut(&id) {
+                    entry.info.target_time = next_run;
+                } else {
+                    break;
+                }
+            }
+            let _ = persist_inner_store(&store, &storage_path);
+        }
+    });
 }
 
 #[tauri::command]
@@ -320,6 +441,62 @@ fn run_action(action: &TimerAction, message: Option<&str>) {
     }
 }
 
+fn validate_recurrence(recurrence: Option<&RecurrenceConfig>) -> Result<(), String> {
+    let Some(recurrence) = recurrence else {
+        return Ok(());
+    };
+
+    match recurrence.preset {
+        RecurrencePreset::Daily | RecurrencePreset::Weekdays => Ok(()),
+        RecurrencePreset::EveryNHours => {
+            let Some(hours) = recurrence.interval_hours else {
+                return Err("Every N Hours requires an interval.".to_string());
+            };
+            if (1..=24).contains(&hours) {
+                Ok(())
+            } else {
+                Err("Interval hours must be between 1 and 24.".to_string())
+            }
+        }
+    }
+}
+
+fn compute_next_run(current_target: DateTime<Utc>, recurrence: &RecurrenceConfig) -> Option<DateTime<Utc>> {
+    match recurrence.preset {
+        RecurrencePreset::Daily => {
+            let mut next = current_target + ChronoDuration::days(1);
+            while next <= Utc::now() {
+                next += ChronoDuration::days(1);
+            }
+            Some(next)
+        }
+        RecurrencePreset::EveryNHours => {
+            let interval = recurrence.interval_hours?;
+            let mut next = current_target + ChronoDuration::hours(interval as i64);
+            while next <= Utc::now() {
+                next += ChronoDuration::hours(interval as i64);
+            }
+            Some(next)
+        }
+        RecurrencePreset::Weekdays => {
+            let time = current_target.time();
+            let mut date = current_target.date_naive() + ChronoDuration::days(1);
+
+            for _ in 0..14 {
+                let weekday = date.weekday();
+                if weekday != Weekday::Sat && weekday != Weekday::Sun {
+                    let candidate = Utc.from_utc_datetime(&date.and_time(time));
+                    if candidate > Utc::now() {
+                        return Some(candidate);
+                    }
+                }
+                date += ChronoDuration::days(1);
+            }
+            None
+        }
+    }
+}
+
 fn run_osascript(script: &str) -> Result<(), String> {
     let output = Command::new("/usr/bin/osascript")
         .arg("-e")
@@ -332,6 +509,90 @@ fn run_osascript(script: &str) -> Result<(), String> {
     } else {
         Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
+}
+
+fn persist_inner_store(store: &Arc<Mutex<HashMap<String, TimerEntry>>>, storage_path: &Path) -> Result<(), String> {
+    let locked = store
+        .lock()
+        .map_err(|_| "Failed to lock timer store".to_string())?;
+    let mut timers: Vec<TimerInfo> = locked.values().map(|entry| entry.info.clone()).collect();
+    timers.sort_by_key(|timer| timer.target_time);
+    drop(locked);
+
+    if let Some(parent) = storage_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create timer storage directory: {err}"))?;
+    }
+
+    let data = serde_json::to_string_pretty(&PersistedTimers { timers })
+        .map_err(|err| format!("Failed to encode timer data: {err}"))?;
+    fs::write(storage_path, data).map_err(|err| format!("Failed to write timer data: {err}"))?;
+    Ok(())
+}
+
+fn restore_timers(store: &TimerStore) -> Result<(), String> {
+    let restored = store.load_persisted_infos()?;
+    if restored.is_empty() {
+        return Ok(());
+    }
+
+    let now = Utc::now();
+    for mut info in restored {
+        if info.target_time <= now {
+            if let Some(recurrence) = info.recurrence.as_ref() {
+                let mut next = info.target_time;
+                while next <= now {
+                    let Some(updated) = compute_next_run(next, recurrence) else {
+                        next = now;
+                        break;
+                    };
+                    next = updated;
+                }
+                if next <= now {
+                    continue;
+                }
+                info.target_time = next;
+            } else {
+                continue;
+            }
+        }
+
+        let (cancel_tx, cancel_rx) = mpsc::channel();
+        {
+            let mut locked = store
+                .inner
+                .lock()
+                .map_err(|_| "Failed to lock timer store".to_string())?;
+            locked.insert(
+                info.id.clone(),
+                TimerEntry {
+                    info: info.clone(),
+                    cancel_tx,
+                },
+            );
+        }
+
+        schedule_timer_thread(
+            store.inner.clone(),
+            store.storage_path.as_ref(),
+            info.id.clone(),
+            info.target_time,
+            info.clone(),
+            info.recurrence.clone(),
+            cancel_rx,
+        );
+    }
+
+    store.persist()?;
+    Ok(())
+}
+
+fn timer_storage_path(app: &tauri::AppHandle) -> PathBuf {
+    let base = app
+        .path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("lockpilot"));
+    base.join("timers.json")
 }
 
 fn fetch_releases() -> Result<Vec<GithubRelease>, String> {
@@ -454,7 +715,14 @@ fn download_asset_to_temp(url: &str, tag: &str) -> Result<PathBuf, String> {
 
 fn main() {
     tauri::Builder::default()
-        .manage(TimerStore::default())
+        .setup(|app| {
+            let store = TimerStore::new(timer_storage_path(app.handle()));
+            if let Err(err) = restore_timers(&store) {
+                eprintln!("Failed to restore timers: {err}");
+            }
+            app.manage(store);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             create_timer,
             list_timers,

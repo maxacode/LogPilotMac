@@ -19,6 +19,11 @@ You can add any number of timers, see active timers with due times/countdown, an
 - Rollback by selecting a specific release tag/version
 
 ## Changelog
+- `v0.4.0`:
+  - Added recurring timers (daily, weekdays, every N hours).
+  - Added persistent timer storage and auto-restore on app launch.
+  - Updated app icon to lock + timer themed design.
+  - Refined glass UI styling with narrower, borderless mac-style layout.
 - `v0.3.0`:
   - Removed GitHub Actions workflow from the repository.
   - Bumped app version to `0.3.0`.

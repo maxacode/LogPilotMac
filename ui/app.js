@@ -4,6 +4,9 @@ const { getVersion } = window.__TAURI__.app;
 const form = document.getElementById("timer-form");
 const actionInput = document.getElementById("action");
 const targetTimeInput = document.getElementById("target-time");
+const recurrencePresetInput = document.getElementById("recurrence-preset");
+const intervalWrap = document.getElementById("interval-wrap");
+const intervalHoursInput = document.getElementById("interval-hours");
 const messageWrap = document.getElementById("message-wrap");
 const messageInput = document.getElementById("message");
 const timersEl = document.getElementById("timers");
@@ -29,12 +32,12 @@ let latestUpdate = null;
 
 const showStatus = (text, isError = false) => {
   statusEl.textContent = text;
-  statusEl.style.color = isError ? "#c30e2e" : "#475569";
+  statusEl.style.color = isError ? "#c30e2e" : "#4f7480";
 };
 
 const showUpdateStatus = (text, isError = false) => {
   updateStatusEl.textContent = text;
-  updateStatusEl.style.color = isError ? "#c30e2e" : "#475569";
+  updateStatusEl.style.color = isError ? "#c30e2e" : "#4f7480";
 };
 
 const selectedChannel = () => updateChannelSelect.value;
@@ -43,6 +46,17 @@ const toggleMessage = () => {
   const isPopup = actionInput.value === "popup";
   messageWrap.style.display = isPopup ? "grid" : "none";
   messageInput.required = isPopup;
+};
+
+const toggleRecurrence = () => {
+  const recurring = recurrencePresetInput.value !== "none";
+  const needsInterval = recurrencePresetInput.value === "every_n_hours";
+  intervalWrap.classList.toggle("hidden", !needsInterval);
+  intervalHoursInput.required = needsInterval;
+
+  if (!recurring) {
+    intervalWrap.classList.add("hidden");
+  }
 };
 
 const fmtDate = (iso) => new Date(iso).toLocaleString();
@@ -58,6 +72,26 @@ const fmtRemaining = (iso) => {
   const minutes = Math.floor((total % 3600) / 60);
   const seconds = total % 60;
   return `${hours}h ${minutes}m ${seconds}s`;
+};
+
+const recurrenceLabel = (recurrence) => {
+  if (!recurrence) {
+    return "One-time";
+  }
+
+  if (recurrence.preset === "daily") {
+    return "Repeats daily";
+  }
+
+  if (recurrence.preset === "weekdays") {
+    return "Repeats weekdays";
+  }
+
+  if (recurrence.preset === "every_n_hours") {
+    return `Repeats every ${recurrence.intervalHours ?? "?"} hour(s)`;
+  }
+
+  return "Recurring";
 };
 
 const renderTimers = (timers) => {
@@ -100,7 +134,11 @@ const renderTimers = (timers) => {
     when.className = "timer-meta";
     when.textContent = `Runs at ${fmtDate(timer.targetTime)} (${fmtRemaining(timer.targetTime)})`;
 
-    item.append(top, when);
+    const recurrence = document.createElement("div");
+    recurrence.className = "timer-meta";
+    recurrence.textContent = recurrenceLabel(timer.recurrence);
+
+    item.append(top, when, recurrence);
 
     if (timer.action === "popup" && timer.message) {
       const msg = document.createElement("div");
@@ -208,16 +246,29 @@ form.addEventListener("submit", async (event) => {
     return;
   }
 
+  const recurrencePreset = recurrencePresetInput.value;
+  let recurrence = null;
+  if (recurrencePreset !== "none") {
+    recurrence = {
+      preset: recurrencePreset,
+      intervalHours: recurrencePreset === "every_n_hours" ? Number(intervalHoursInput.value || 0) : null,
+    };
+  }
+
   const request = {
     action: actionInput.value,
     targetTime: new Date(targetTimeInput.value).toISOString(),
+    recurrence,
     message: actionInput.value === "popup" ? messageInput.value : null,
   };
 
   try {
     await invoke("create_timer", { request });
     form.reset();
+    recurrencePresetInput.value = "none";
+    intervalHoursInput.value = "2";
     toggleMessage();
+    toggleRecurrence();
     showStatus("Timer created.");
     await loadTimers();
   } catch (err) {
@@ -227,6 +278,7 @@ form.addEventListener("submit", async (event) => {
 
 refreshBtn.addEventListener("click", loadTimers);
 actionInput.addEventListener("change", toggleMessage);
+recurrencePresetInput.addEventListener("change", toggleRecurrence);
 
 checkUpdatesBtn.addEventListener("click", () => checkForUpdates(false));
 installLatestBtn.addEventListener("click", installChannelUpdate);
@@ -252,6 +304,7 @@ updateChannelSelect.addEventListener("change", () => {
 
 const initialize = async () => {
   toggleMessage();
+  toggleRecurrence();
   await loadTimers();
   setInterval(loadTimers, 1000);
 
