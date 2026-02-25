@@ -74,41 +74,6 @@ jobs:
           echo "dmg_path=$DMG_PATH" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Extract release notes from CHANGELOG.md
-        id: notes
-        shell: bash
-        run: |
-          VERSION="${{ steps.meta.outputs.version }}"
-          TAG="v${VERSION}"
-
-          if [[ -f CHANGELOG.md ]]; then
-            NOTES=$(awk -v tag="$TAG" '
-              BEGIN { in_section=0 }
-              $0 ~ "^## \\[" tag "\\]" { in_section=1; next }
-              $0 ~ "^## " && in_section==1 { exit }
-              in_section==1 { print }
-            ' CHANGELOG.md | sed '/^[[:space:]]*$/N;/^\n$/D')
-
-            if [[ -z "${NOTES:-}" ]]; then
-              NOTES=$(awk '
-                BEGIN { in_section=0 }
-                $0 ~ "^## \[Unreleased\]" { in_section=1; next }
-                $0 ~ "^## " && in_section==1 { exit }
-                in_section==1 { print }
-              ' CHANGELOG.md | sed '/^[[:space:]]*$/N;/^\n$/D')
-            fi
-          fi
-
-          if [[ -z "${NOTES:-}" ]]; then
-            NOTES="Auto-generated from `${{ github.ref_name }}` at `${{ github.sha }}`.\nApp version: `${VERSION}`\n\n(No matching CHANGELOG section found. Add: ## [${TAG}] or ## [Unreleased])"
-          fi
-
-          {
-            echo "body<<EOF"
-            echo "$NOTES"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
       - name: Publish branch release
         uses: ncipollo/release-action@v1
         with:
@@ -116,7 +81,9 @@ jobs:
           name: ${{ steps.meta.outputs.name }}
           prerelease: ${{ steps.meta.outputs.prerelease }}
           makeLatest: ${{ steps.meta.outputs.make_latest }}
-          body: ${{ steps.notes.outputs.body }}
+          body: |
+            Auto-generated from `${{ github.ref_name }}` at `${{ github.sha }}`.
+            App version: `${{ steps.meta.outputs.version }}`
           allowUpdates: true
           replacesArtifacts: true
           artifacts: ${{ steps.meta.outputs.dmg_path }}
