@@ -43,6 +43,7 @@ enum RecurrencePreset {
     Daily,
     Weekdays,
     EveryNHours,
+    EveryNMinutes,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -50,6 +51,7 @@ enum RecurrencePreset {
 struct RecurrenceConfig {
     preset: RecurrencePreset,
     interval_hours: Option<u32>,
+    interval_minutes: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -467,6 +469,16 @@ fn validate_recurrence(recurrence: Option<&RecurrenceConfig>) -> Result<(), Stri
                 Err("Interval hours must be between 1 and 24.".to_string())
             }
         }
+        RecurrencePreset::EveryNMinutes => {
+            let Some(minutes) = recurrence.interval_minutes else {
+                return Err("Every N Minutes requires an interval.".to_string());
+            };
+            if (1..=1440).contains(&minutes) {
+                Ok(())
+            } else {
+                Err("Interval minutes must be between 1 and 1440.".to_string())
+            }
+        }
     }
 }
 
@@ -484,6 +496,14 @@ fn compute_next_run(current_target: DateTime<Utc>, recurrence: &RecurrenceConfig
             let mut next = current_target + ChronoDuration::hours(interval as i64);
             while next <= Utc::now() {
                 next += ChronoDuration::hours(interval as i64);
+            }
+            Some(next)
+        }
+        RecurrencePreset::EveryNMinutes => {
+            let interval = recurrence.interval_minutes?;
+            let mut next = current_target + ChronoDuration::minutes(interval as i64);
+            while next <= Utc::now() {
+                next += ChronoDuration::minutes(interval as i64);
             }
             Some(next)
         }

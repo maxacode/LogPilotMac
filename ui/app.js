@@ -56,9 +56,12 @@ const toggleMessage = () => {
 
 const toggleRecurrence = () => {
   const recurring = recurrencePresetInput.value !== "none";
-  const needsInterval = recurrencePresetInput.value === "every_n_hours";
+  const needsInterval =
+    recurrencePresetInput.value === "every_n_hours" ||
+    recurrencePresetInput.value === "every_n_minutes";
   intervalWrap.classList.toggle("hidden", !needsInterval);
   intervalHoursInput.required = needsInterval;
+  intervalHoursInput.max = recurrencePresetInput.value === "every_n_minutes" ? "1440" : "24";
 
   if (!recurring) {
     intervalWrap.classList.add("hidden");
@@ -95,6 +98,10 @@ const recurrenceLabel = (recurrence) => {
 
   if (recurrence.preset === "every_n_hours") {
     return `Repeats every ${recurrence.intervalHours ?? "?"} hour(s)`;
+  }
+
+  if (recurrence.preset === "every_n_minutes") {
+    return `Repeats every ${recurrence.intervalMinutes ?? "?"} minute(s)`;
   }
 
   return "Recurring";
@@ -258,6 +265,7 @@ form.addEventListener("submit", async (event) => {
     recurrence = {
       preset: recurrencePreset,
       intervalHours: recurrencePreset === "every_n_hours" ? Number(intervalHoursInput.value || 0) : null,
+      intervalMinutes: recurrencePreset === "every_n_minutes" ? Number(intervalHoursInput.value || 0) : null,
     };
   }
 

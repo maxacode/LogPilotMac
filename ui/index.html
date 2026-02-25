@@ -35,12 +35,13 @@
               <option value="daily">Daily</option>
               <option value="weekdays">Weekdays</option>
               <option value="every_n_hours">Every N Hours</option>
+              <option value="every_n_minutes">Every N Minutes</option>
             </select>
           </label>
 
           <label id="interval-wrap" class="hidden">
-            Every N Hours
-            <input id="interval-hours" type="number" min="1" max="24" value="2" />
+            Interval
+            <input id="interval-hours" type="number" min="1" max="1440" value="2" />
           </label>
 
           <label id="message-wrap">
