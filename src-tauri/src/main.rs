@@ -2,17 +2,24 @@
 
 use std::{
     collections::HashMap,
-    sync::mpsc,
+    fs,
+    path::PathBuf,
     process::Command,
+    sync::mpsc,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
 };
 
 use chrono::{DateTime, Utc};
+use reqwest::blocking::Client;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use uuid::Uuid;
+
+const GITHUB_OWNER: &str = "maxacode";
+const GITHUB_REPO: &str = "LogPilotMac";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -49,6 +56,40 @@ struct TimerEntry {
 #[derive(Clone, Default)]
 struct TimerStore {
     inner: Arc<Mutex<HashMap<String, TimerEntry>>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct GithubAsset {
+    name: String,
+    browser_download_url: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct GithubRelease {
+    tag_name: String,
+    name: Option<String>,
+    body: Option<String>,
+    draft: bool,
+    prerelease: bool,
+    published_at: Option<String>,
+    assets: Vec<GithubAsset>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseVersion {
+    tag: String,
+    name: String,
+    published_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInfo {
+    tag: String,
+    name: String,
+    notes: Option<String>,
+    published_at: Option<String>,
 }
 
 #[tauri::command]
@@ -145,6 +186,67 @@ fn create_timer(request: CreateTimerRequest, state: State<'_, TimerStore>) -> Re
     Ok(info)
 }
 
+#[tauri::command]
+fn list_release_versions() -> Result<Vec<ReleaseVersion>, String> {
+    let mut releases = stable_releases(fetch_releases()?);
+    releases.sort_by(release_version_desc);
+
+    Ok(releases
+        .into_iter()
+        .map(|release| ReleaseVersion {
+            tag: release.tag_name.clone(),
+            name: release.name.unwrap_or_else(|| release.tag_name.clone()),
+            published_at: release.published_at,
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn check_for_updates(current_version: String) -> Result<Option<UpdateInfo>, String> {
+    let current = normalize_version(&current_version)
+        .ok_or_else(|| format!("Invalid current version: {current_version}"))?;
+
+    let mut releases = stable_releases(fetch_releases()?);
+    releases.sort_by(release_version_desc);
+
+    let update = releases.into_iter().find(|release| {
+        normalize_version(&release.tag_name)
+            .map(|version| version > current)
+            .unwrap_or(false)
+    });
+
+    Ok(update.map(|release| UpdateInfo {
+        tag: release.tag_name.clone(),
+        name: release.name.unwrap_or_else(|| release.tag_name.clone()),
+        notes: release.body,
+        published_at: release.published_at,
+    }))
+}
+
+#[tauri::command]
+fn install_release(tag: String) -> Result<String, String> {
+    let releases = stable_releases(fetch_releases()?);
+    let release = releases
+        .into_iter()
+        .find(|release| tags_match(&release.tag_name, &tag))
+        .ok_or_else(|| format!("Release not found for tag: {tag}"))?;
+
+    let dmg_asset = pick_dmg_asset(&release.assets)
+        .ok_or_else(|| format!("No DMG asset found for release {}", release.tag_name))?;
+
+    let local_dmg = download_asset_to_temp(&dmg_asset.browser_download_url, &release.tag_name)?;
+    Command::new("/usr/bin/open")
+        .arg(&local_dmg)
+        .spawn()
+        .map_err(|err| format!("Failed to open installer DMG: {err}"))?;
+
+    Ok(format!(
+        "Opened installer for {} from {}",
+        release.tag_name,
+        local_dmg.display()
+    ))
+}
+
 fn run_action(action: &TimerAction, message: Option<&str>) {
     match action {
         TimerAction::Popup => {
@@ -196,10 +298,116 @@ fn run_osascript(script: &str) -> Result<(), String> {
     }
 }
 
+fn fetch_releases() -> Result<Vec<GithubRelease>, String> {
+    let client = Client::builder()
+        .user_agent("LockPilot-Updater")
+        .build()
+        .map_err(|err| format!("Failed to build HTTP client: {err}"))?;
+
+    let url = format!(
+        "https://api.github.com/repos/{}/{}/releases?per_page=100",
+        GITHUB_OWNER, GITHUB_REPO
+    );
+
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|err| format!("Failed to fetch GitHub releases: {err}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "GitHub releases API returned status {}",
+            response.status()
+        ));
+    }
+
+    response
+        .json::<Vec<GithubRelease>>()
+        .map_err(|err| format!("Failed to parse GitHub releases: {err}"))
+}
+
+fn normalize_version(version: &str) -> Option<Version> {
+    Version::parse(version.trim().trim_start_matches('v')).ok()
+}
+
+fn release_version_desc(a: &GithubRelease, b: &GithubRelease) -> std::cmp::Ordering {
+    let av = normalize_version(&a.tag_name);
+    let bv = normalize_version(&b.tag_name);
+    bv.cmp(&av)
+}
+
+fn stable_releases(releases: Vec<GithubRelease>) -> Vec<GithubRelease> {
+    releases
+        .into_iter()
+        .filter(|release| !release.draft && !release.prerelease)
+        .filter(|release| normalize_version(&release.tag_name).is_some())
+        .collect()
+}
+
+fn tags_match(a: &str, b: &str) -> bool {
+    a.trim() == b.trim() || a.trim_start_matches('v') == b.trim_start_matches('v')
+}
+
+fn pick_dmg_asset(assets: &[GithubAsset]) -> Option<GithubAsset> {
+    let arch = std::env::consts::ARCH;
+    let dmg_assets: Vec<GithubAsset> = assets
+        .iter()
+        .filter(|asset| asset.name.to_lowercase().ends_with(".dmg"))
+        .cloned()
+        .collect();
+
+    let arch_match = match arch {
+        "aarch64" => dmg_assets
+            .iter()
+            .find(|asset| asset.name.contains("aarch64") || asset.name.contains("arm64"))
+            .cloned(),
+        "x86_64" => dmg_assets
+            .iter()
+            .find(|asset| asset.name.contains("x86_64") || asset.name.contains("amd64"))
+            .cloned(),
+        _ => None,
+    };
+
+    arch_match.or_else(|| dmg_assets.into_iter().next())
+}
+
+fn download_asset_to_temp(url: &str, tag: &str) -> Result<PathBuf, String> {
+    let client = Client::builder()
+        .user_agent("LockPilot-Updater")
+        .build()
+        .map_err(|err| format!("Failed to build HTTP client: {err}"))?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|err| format!("Failed to download release asset: {err}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Release asset download failed with status {}",
+            response.status()
+        ));
+    }
+
+    let bytes = response
+        .bytes()
+        .map_err(|err| format!("Failed to read release asset body: {err}"))?;
+    let safe_tag = tag.replace('/', "-");
+    let path = std::env::temp_dir().join(format!("LockPilot-{safe_tag}.dmg"));
+    fs::write(&path, bytes).map_err(|err| format!("Failed to write installer DMG: {err}"))?;
+    Ok(path)
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(TimerStore::default())
-        .invoke_handler(tauri::generate_handler![create_timer, list_timers, cancel_timer])
+        .invoke_handler(tauri::generate_handler![
+            create_timer,
+            list_timers,
+            cancel_timer,
+            list_release_versions,
+            check_for_updates,
+            install_release
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

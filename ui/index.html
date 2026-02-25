@@ -46,6 +46,36 @@
         </div>
         <ul id="timers" class="timer-list"></ul>
       </section>
+
+      <section class="card">
+        <div class="header-row">
+          <h2>Updates</h2>
+          <button id="check-updates" class="secondary">Check Now</button>
+        </div>
+        <p class="timer-meta">Current Version: <strong id="current-version">-</strong></p>
+        <label class="inline-toggle">
+          <input id="auto-check-updates" type="checkbox" />
+          Check for updates on launch
+        </label>
+        <p id="update-status" class="status"></p>
+
+        <div id="update-result" class="update-panel hidden">
+          <p class="timer-meta">
+            New version: <strong id="latest-version">-</strong>
+          </p>
+          <p id="latest-notes" class="timer-meta"></p>
+          <button id="install-latest">Install Latest</button>
+        </div>
+
+        <div class="rollback">
+          <h3>Rollback</h3>
+          <p class="timer-meta">Pick an older release and reinstall it.</p>
+          <div class="rollback-row">
+            <select id="rollback-version"></select>
+            <button id="rollback-install" class="secondary">Install Selected</button>
+          </div>
+        </div>
+      </section>
     </main>
 
     <script src="./app.js"></script>
