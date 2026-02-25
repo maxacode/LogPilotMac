@@ -1,4 +1,5 @@
 const { invoke } = window.__TAURI__.core;
+const { getVersion } = window.__TAURI__.app;
 
 const form = document.getElementById("timer-form");
 const actionInput = document.getElementById("action");
@@ -9,9 +10,29 @@ const timersEl = document.getElementById("timers");
 const statusEl = document.getElementById("status");
 const refreshBtn = document.getElementById("refresh");
 
+const checkUpdatesBtn = document.getElementById("check-updates");
+const autoCheckUpdatesInput = document.getElementById("auto-check-updates");
+const currentVersionEl = document.getElementById("current-version");
+const updateStatusEl = document.getElementById("update-status");
+const updateResultEl = document.getElementById("update-result");
+const latestVersionEl = document.getElementById("latest-version");
+const latestNotesEl = document.getElementById("latest-notes");
+const installLatestBtn = document.getElementById("install-latest");
+const rollbackVersionSelect = document.getElementById("rollback-version");
+const rollbackInstallBtn = document.getElementById("rollback-install");
+
+const AUTO_UPDATE_KEY = "lockpilot.autoCheckUpdates";
+let currentVersion = "";
+let latestUpdate = null;
+
 const showStatus = (text, isError = false) => {
   statusEl.textContent = text;
   statusEl.style.color = isError ? "#c30e2e" : "#475569";
+};
+
+const showUpdateStatus = (text, isError = false) => {
+  updateStatusEl.textContent = text;
+  updateStatusEl.style.color = isError ? "#c30e2e" : "#475569";
 };
 
 const toggleMessage = () => {
@@ -97,6 +118,68 @@ const loadTimers = async () => {
   }
 };
 
+const renderUpdateResult = (update) => {
+  if (!update) {
+    updateResultEl.classList.add("hidden");
+    latestUpdate = null;
+    return;
+  }
+
+  latestUpdate = update;
+  updateResultEl.classList.remove("hidden");
+  latestVersionEl.textContent = update.tag;
+  latestNotesEl.textContent = update.notes?.trim()
+    ? update.notes.split("\n")[0]
+    : "No release notes provided.";
+};
+
+const loadRollbackVersions = async () => {
+  rollbackVersionSelect.innerHTML = "";
+
+  try {
+    const versions = await invoke("list_release_versions");
+    versions.forEach((version) => {
+      const option = document.createElement("option");
+      option.value = version.tag;
+      option.textContent = `${version.tag}${version.publishedAt ? ` (${new Date(version.publishedAt).toLocaleDateString()})` : ""}`;
+      rollbackVersionSelect.appendChild(option);
+    });
+  } catch (err) {
+    showUpdateStatus(`Could not load release versions: ${String(err)}`, true);
+  }
+};
+
+const checkForUpdates = async (silentWhenUpToDate = false) => {
+  if (!currentVersion) {
+    return;
+  }
+
+  try {
+    showUpdateStatus("Checking GitHub releases...");
+    const update = await invoke("check_for_updates", { currentVersion });
+    renderUpdateResult(update);
+
+    if (update) {
+      showUpdateStatus(`Update available: ${update.tag}`);
+    } else if (!silentWhenUpToDate) {
+      showUpdateStatus("You are on the latest version.");
+    } else {
+      showUpdateStatus("");
+    }
+  } catch (err) {
+    showUpdateStatus(`Update check failed: ${String(err)}`, true);
+  }
+};
+
+const installTag = async (tag) => {
+  try {
+    const result = await invoke("install_release", { tag });
+    showUpdateStatus(`${result}. Complete install from the opened DMG.`);
+  } catch (err) {
+    showUpdateStatus(`Install failed: ${String(err)}`, true);
+  }
+};
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
@@ -125,7 +208,48 @@ form.addEventListener("submit", async (event) => {
 refreshBtn.addEventListener("click", loadTimers);
 actionInput.addEventListener("change", toggleMessage);
 
-setInterval(loadTimers, 1000);
+checkUpdatesBtn.addEventListener("click", () => checkForUpdates(false));
+installLatestBtn.addEventListener("click", async () => {
+  if (!latestUpdate) {
+    showUpdateStatus("No update selected.", true);
+    return;
+  }
 
-toggleMessage();
-loadTimers();
+  await installTag(latestUpdate.tag);
+});
+
+rollbackInstallBtn.addEventListener("click", async () => {
+  const selectedTag = rollbackVersionSelect.value;
+  if (!selectedTag) {
+    showUpdateStatus("Pick a version to install.", true);
+    return;
+  }
+
+  await installTag(selectedTag);
+});
+
+autoCheckUpdatesInput.addEventListener("change", () => {
+  localStorage.setItem(AUTO_UPDATE_KEY, autoCheckUpdatesInput.checked ? "1" : "0");
+});
+
+const initialize = async () => {
+  toggleMessage();
+  await loadTimers();
+  setInterval(loadTimers, 1000);
+
+  currentVersion = await getVersion();
+  currentVersionEl.textContent = currentVersion;
+
+  const autoCheckSetting = localStorage.getItem(AUTO_UPDATE_KEY);
+  autoCheckUpdatesInput.checked = autoCheckSetting !== "0";
+
+  await loadRollbackVersions();
+
+  if (autoCheckUpdatesInput.checked) {
+    await checkForUpdates(true);
+  }
+};
+
+initialize().catch((err) => {
+  showStatus(`Initialization failed: ${String(err)}`, true);
+});
