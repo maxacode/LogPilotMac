@@ -1677,7 +1677,7 @@ dependencies = [
 
 [[package]]
 name = "lockpilot"
-version = "0.4.1"
+version = "0.4.4"
 dependencies = [
  "chrono",
  "reqwest 0.12.28",

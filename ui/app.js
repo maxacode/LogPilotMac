@@ -27,6 +27,7 @@ const rollbackInstallBtn = document.getElementById("rollback-install");
 
 const AUTO_UPDATE_KEY = "lockpilot.autoCheckUpdates";
 const UPDATE_CHANNEL_KEY = "lockpilot.updateChannel";
+const LAUNCH_TIME = new Date();
 let currentVersion = "";
 let latestUpdate = null;
 
@@ -42,6 +43,11 @@ const showUpdateStatus = (text, isError = false) => {
 
 const selectedChannel = () => updateChannelSelect.value;
 
+const toLocalDateTimeValue = (date) => {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
+
 const toggleMessage = () => {
   const isPopup = actionInput.value === "popup";
   messageWrap.style.display = isPopup ? "grid" : "none";
@@ -50,9 +56,12 @@ const toggleMessage = () => {
 
 const toggleRecurrence = () => {
   const recurring = recurrencePresetInput.value !== "none";
-  const needsInterval = recurrencePresetInput.value === "every_n_hours";
+  const needsInterval =
+    recurrencePresetInput.value === "every_n_hours" ||
+    recurrencePresetInput.value === "every_n_minutes";
   intervalWrap.classList.toggle("hidden", !needsInterval);
   intervalHoursInput.required = needsInterval;
+  intervalHoursInput.max = recurrencePresetInput.value === "every_n_minutes" ? "1440" : "24";
 
   if (!recurring) {
     intervalWrap.classList.add("hidden");
@@ -89,6 +98,10 @@ const recurrenceLabel = (recurrence) => {
 
   if (recurrence.preset === "every_n_hours") {
     return `Repeats every ${recurrence.intervalHours ?? "?"} hour(s)`;
+  }
+
+  if (recurrence.preset === "every_n_minutes") {
+    return `Repeats every ${recurrence.intervalMinutes ?? "?"} minute(s)`;
   }
 
   return "Recurring";
@@ -252,6 +265,7 @@ form.addEventListener("submit", async (event) => {
     recurrence = {
       preset: recurrencePreset,
       intervalHours: recurrencePreset === "every_n_hours" ? Number(intervalHoursInput.value || 0) : null,
+      intervalMinutes: recurrencePreset === "every_n_minutes" ? Number(intervalHoursInput.value || 0) : null,
     };
   }
 
@@ -265,6 +279,7 @@ form.addEventListener("submit", async (event) => {
   try {
     await invoke("create_timer", { request });
     form.reset();
+    targetTimeInput.value = toLocalDateTimeValue(LAUNCH_TIME);
     recurrencePresetInput.value = "none";
     intervalHoursInput.value = "2";
     toggleMessage();
@@ -303,6 +318,7 @@ updateChannelSelect.addEventListener("change", () => {
 });
 
 const initialize = async () => {
+  targetTimeInput.value = toLocalDateTimeValue(LAUNCH_TIME);
   toggleMessage();
   toggleRecurrence();
   await loadTimers();
