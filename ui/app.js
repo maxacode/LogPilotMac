@@ -27,6 +27,7 @@ const rollbackInstallBtn = document.getElementById("rollback-install");
 
 const AUTO_UPDATE_KEY = "lockpilot.autoCheckUpdates";
 const UPDATE_CHANNEL_KEY = "lockpilot.updateChannel";
+const LAUNCH_TIME = new Date();
 let currentVersion = "";
 let latestUpdate = null;
 
@@ -41,6 +42,11 @@ const showUpdateStatus = (text, isError = false) => {
 };
 
 const selectedChannel = () => updateChannelSelect.value;
+
+const toLocalDateTimeValue = (date) => {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+};
 
 const toggleMessage = () => {
   const isPopup = actionInput.value === "popup";
@@ -265,6 +271,7 @@ form.addEventListener("submit", async (event) => {
   try {
     await invoke("create_timer", { request });
     form.reset();
+    targetTimeInput.value = toLocalDateTimeValue(LAUNCH_TIME);
     recurrencePresetInput.value = "none";
     intervalHoursInput.value = "2";
     toggleMessage();
@@ -303,6 +310,7 @@ updateChannelSelect.addEventListener("change", () => {
 });
 
 const initialize = async () => {
+  targetTimeInput.value = toLocalDateTimeValue(LAUNCH_TIME);
   toggleMessage();
   toggleRecurrence();
   await loadTimers();
