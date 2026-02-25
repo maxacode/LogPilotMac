@@ -31,6 +31,13 @@ enum TimerAction {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum UpdateChannel {
+    Main,
+    Dev,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct TimerInfo {
     id: String,
@@ -202,11 +209,14 @@ fn list_release_versions() -> Result<Vec<ReleaseVersion>, String> {
 }
 
 #[tauri::command]
-fn check_for_updates(current_version: String) -> Result<Option<UpdateInfo>, String> {
+fn check_channel_update(
+    current_version: String,
+    channel: UpdateChannel,
+) -> Result<Option<UpdateInfo>, String> {
     let current = normalize_version(&current_version)
         .ok_or_else(|| format!("Invalid current version: {current_version}"))?;
 
-    let mut releases = stable_releases(fetch_releases()?);
+    let mut releases = releases_for_channel(fetch_releases()?, &channel);
     releases.sort_by(release_version_desc);
 
     let update = releases.into_iter().find(|release| {
@@ -221,6 +231,32 @@ fn check_for_updates(current_version: String) -> Result<Option<UpdateInfo>, Stri
         notes: release.body,
         published_at: release.published_at,
     }))
+}
+
+#[tauri::command]
+fn install_channel_update(channel: UpdateChannel) -> Result<String, String> {
+    let mut releases = releases_for_channel(fetch_releases()?, &channel);
+    releases.sort_by(release_version_desc);
+    let release = releases
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("No releases found for {} channel", channel_name(&channel)))?;
+
+    let dmg_asset = pick_dmg_asset(&release.assets)
+        .ok_or_else(|| format!("No DMG asset found for release {}", release.tag_name))?;
+
+    let local_dmg = download_asset_to_temp(&dmg_asset.browser_download_url, &release.tag_name)?;
+    Command::new("/usr/bin/open")
+        .arg(&local_dmg)
+        .spawn()
+        .map_err(|err| format!("Failed to open installer DMG: {err}"))?;
+
+    Ok(format!(
+        "Opened {} channel installer {} from {}",
+        channel_name(&channel),
+        release.tag_name,
+        local_dmg.display()
+    ))
 }
 
 #[tauri::command]
@@ -344,6 +380,25 @@ fn stable_releases(releases: Vec<GithubRelease>) -> Vec<GithubRelease> {
         .collect()
 }
 
+fn releases_for_channel(releases: Vec<GithubRelease>, channel: &UpdateChannel) -> Vec<GithubRelease> {
+    let base = releases
+        .into_iter()
+        .filter(|release| !release.draft)
+        .filter(|release| normalize_version(&release.tag_name).is_some());
+
+    match channel {
+        UpdateChannel::Main => base.filter(|release| !release.prerelease).collect(),
+        UpdateChannel::Dev => base.filter(|release| release.prerelease).collect(),
+    }
+}
+
+fn channel_name(channel: &UpdateChannel) -> &'static str {
+    match channel {
+        UpdateChannel::Main => "main",
+        UpdateChannel::Dev => "dev",
+    }
+}
+
 fn tags_match(a: &str, b: &str) -> bool {
     a.trim() == b.trim() || a.trim_start_matches('v') == b.trim_start_matches('v')
 }
@@ -405,7 +460,8 @@ fn main() {
             list_timers,
             cancel_timer,
             list_release_versions,
-            check_for_updates,
+            check_channel_update,
+            install_channel_update,
             install_release
         ])
         .run(tauri::generate_context!())

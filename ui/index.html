@@ -3,13 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>LockPilot</title>
+    <title>LockPilot - Made by Maks</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <main class="app">
       <section class="card">
-        <h1>LockPilot</h1>
+        <h1>LockPilot - Made by Maks</h1>
         <p class="subtitle">Schedule multiple system actions for exact times.</p>
 
         <form id="timer-form" class="form">
@@ -53,6 +53,13 @@
           <button id="check-updates" class="secondary">Check Now</button>
         </div>
         <p class="timer-meta">Current Version: <strong id="current-version">-</strong></p>
+        <label>
+          Update Channel
+          <select id="update-channel">
+            <option value="main">main (stable)</option>
+            <option value="dev">dev (prerelease)</option>
+          </select>
+        </label>
         <label class="inline-toggle">
           <input id="auto-check-updates" type="checkbox" />
           Check for updates on launch
@@ -64,7 +71,7 @@
             New version: <strong id="latest-version">-</strong>
           </p>
           <p id="latest-notes" class="timer-meta"></p>
-          <button id="install-latest">Install Latest</button>
+          <button id="install-latest">Install Latest In Channel</button>
         </div>
 
         <div class="rollback">

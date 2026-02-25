@@ -12,6 +12,7 @@ const refreshBtn = document.getElementById("refresh");
 
 const checkUpdatesBtn = document.getElementById("check-updates");
 const autoCheckUpdatesInput = document.getElementById("auto-check-updates");
+const updateChannelSelect = document.getElementById("update-channel");
 const currentVersionEl = document.getElementById("current-version");
 const updateStatusEl = document.getElementById("update-status");
 const updateResultEl = document.getElementById("update-result");
@@ -22,6 +23,7 @@ const rollbackVersionSelect = document.getElementById("rollback-version");
 const rollbackInstallBtn = document.getElementById("rollback-install");
 
 const AUTO_UPDATE_KEY = "lockpilot.autoCheckUpdates";
+const UPDATE_CHANNEL_KEY = "lockpilot.updateChannel";
 let currentVersion = "";
 let latestUpdate = null;
 
@@ -34,6 +36,8 @@ const showUpdateStatus = (text, isError = false) => {
   updateStatusEl.textContent = text;
   updateStatusEl.style.color = isError ? "#c30e2e" : "#475569";
 };
+
+const selectedChannel = () => updateChannelSelect.value;
 
 const toggleMessage = () => {
   const isPopup = actionInput.value === "popup";
@@ -154,20 +158,36 @@ const checkForUpdates = async (silentWhenUpToDate = false) => {
     return;
   }
 
+  const channel = selectedChannel();
+
   try {
-    showUpdateStatus("Checking GitHub releases...");
-    const update = await invoke("check_for_updates", { currentVersion });
+    showUpdateStatus(`Checking ${channel} channel on GitHub releases...`);
+    const update = await invoke("check_channel_update", {
+      currentVersion,
+      channel,
+    });
     renderUpdateResult(update);
 
     if (update) {
-      showUpdateStatus(`Update available: ${update.tag}`);
+      showUpdateStatus(`Update available in ${channel}: ${update.tag}`);
     } else if (!silentWhenUpToDate) {
-      showUpdateStatus("You are on the latest version.");
+      showUpdateStatus(`No newer version found in ${channel}.`);
     } else {
       showUpdateStatus("");
     }
   } catch (err) {
     showUpdateStatus(`Update check failed: ${String(err)}`, true);
+  }
+};
+
+const installChannelUpdate = async () => {
+  const channel = selectedChannel();
+
+  try {
+    const result = await invoke("install_channel_update", { channel });
+    showUpdateStatus(`${result}. Complete install from the opened DMG.`);
+  } catch (err) {
+    showUpdateStatus(`Install failed: ${String(err)}`, true);
   }
 };
 
@@ -209,14 +229,7 @@ refreshBtn.addEventListener("click", loadTimers);
 actionInput.addEventListener("change", toggleMessage);
 
 checkUpdatesBtn.addEventListener("click", () => checkForUpdates(false));
-installLatestBtn.addEventListener("click", async () => {
-  if (!latestUpdate) {
-    showUpdateStatus("No update selected.", true);
-    return;
-  }
-
-  await installTag(latestUpdate.tag);
-});
+installLatestBtn.addEventListener("click", installChannelUpdate);
 
 rollbackInstallBtn.addEventListener("click", async () => {
   const selectedTag = rollbackVersionSelect.value;
@@ -232,6 +245,11 @@ autoCheckUpdatesInput.addEventListener("change", () => {
   localStorage.setItem(AUTO_UPDATE_KEY, autoCheckUpdatesInput.checked ? "1" : "0");
 });
 
+updateChannelSelect.addEventListener("change", () => {
+  localStorage.setItem(UPDATE_CHANNEL_KEY, selectedChannel());
+  renderUpdateResult(null);
+});
+
 const initialize = async () => {
   toggleMessage();
   await loadTimers();
@@ -239,6 +257,9 @@ const initialize = async () => {
 
   currentVersion = await getVersion();
   currentVersionEl.textContent = currentVersion;
+
+  const savedChannel = localStorage.getItem(UPDATE_CHANNEL_KEY);
+  updateChannelSelect.value = savedChannel === "dev" ? "dev" : "main";
 
   const autoCheckSetting = localStorage.getItem(AUTO_UPDATE_KEY);
   autoCheckUpdatesInput.checked = autoCheckSetting !== "0";
