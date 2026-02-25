@@ -340,11 +340,20 @@ fn check_channel_update(
     let mut releases = releases_for_channel(fetch_releases()?, &channel);
     releases.sort_by(release_version_desc);
 
-    let update = releases.into_iter().find(|release| {
-        normalize_version(&release.tag_name)
-            .map(|version| version > current)
-            .unwrap_or(false)
-    });
+    let update = match channel {
+        // Dev channel should always point users to the latest prerelease train,
+        // even when local build metadata/version style differs.
+        UpdateChannel::Dev => releases.into_iter().find(|release| {
+            normalize_version(&release.tag_name)
+                .map(|version| version != current)
+                .unwrap_or(true)
+        }),
+        UpdateChannel::Main => releases.into_iter().find(|release| {
+            normalize_version(&release.tag_name)
+                .map(|version| version > current)
+                .unwrap_or(false)
+        }),
+    };
 
     Ok(update.map(|release| UpdateInfo {
         tag: release.tag_name.clone(),
