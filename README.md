@@ -3,6 +3,10 @@
 A macOS desktop app to schedule system actions for specific times, including recurring schedules, update channels, and rollback support.
 
 ## Install on Mac
+Quick Start:
+- Stable (main): [Download latest release](https://github.com/maxacode/LockPilotMac/releases/latest)
+- Dev (dev): [Download latest dev prerelease](https://github.com/maxacode/LockPilotMac/releases/tag/dev-latest)
+
 If you distribute an unsigned or non-notarized `.app`, macOS may block it with a "damaged and can't be opened" message.
 
 You can remove the quarantine flag manually:
