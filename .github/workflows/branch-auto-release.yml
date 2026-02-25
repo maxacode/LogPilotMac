@@ -11,10 +11,13 @@ permissions:
 
 jobs:
   release:
+    if: ${{ !contains(github.event.head_commit.message, '[skip release]') }}
     runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -27,6 +30,27 @@ jobs:
       - name: Install Tauri CLI
         run: cargo install tauri-cli --locked
 
+      - name: Bump patch version
+        id: bump
+        shell: bash
+        run: |
+          BRANCH="${GITHUB_REF_NAME}"
+          VERSION=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version": "([^"]+)".*/\1/')
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          NEXT_PATCH=$((PATCH + 1))
+          NEXT_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+
+          sed -i '' -E "s/(\"version\": \")[^\"]+(\")/\1${NEXT_VERSION}\2/" src-tauri/tauri.conf.json
+          sed -i '' -E "s/^(version = \")[^\"]+(\")/\1${NEXT_VERSION}\2/" src-tauri/Cargo.toml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src-tauri/tauri.conf.json src-tauri/Cargo.toml
+          git commit -m "chore: bump version to ${NEXT_VERSION} [skip release]"
+          git push origin "${BRANCH}"
+
+          echo "version=${NEXT_VERSION}" >> "$GITHUB_OUTPUT"
+
       - name: Build DMG
         run: cargo tauri build --bundles dmg
         working-directory: src-tauri
@@ -36,21 +60,12 @@ jobs:
         shell: bash
         run: |
           BRANCH="${GITHUB_REF_NAME}"
-          VERSION=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed -E 's/.*"version": "([^"]+)".*/\1/')
-
-          if [[ "$BRANCH" == "main" ]]; then
-            TAG="v${VERSION}"
-            NAME="v${VERSION}"
-            PRERELEASE="false"
-            MAKE_LATEST="true"
-          else
-            TAG="v${VERSION}-dev.${GITHUB_RUN_NUMBER}"
-            NAME="v${VERSION}-dev.${GITHUB_RUN_NUMBER}"
-            PRERELEASE="true"
-            MAKE_LATEST="false"
-          fi
-
-          DMG_PATH=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" -maxdepth 1 | head -n 1)
+          VERSION="${{ steps.bump.outputs.version }}"
+          TAG="v${VERSION}"
+          NAME="v${VERSION}"
+          PRERELEASE=$([[ "$BRANCH" == "dev" ]] && echo "true" || echo "false")
+          MAKE_LATEST=$([[ "$BRANCH" == "main" ]] && echo "true" || echo "false")
+          DMG_PATH=$(find src-tauri/target/release/bundle/dmg -maxdepth 1 -name "*.dmg" | head -n 1)
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
