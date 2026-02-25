@@ -1,16 +1,18 @@
 # LockPilot - Made by Maks (Mac)
 ![LockPilot Screenshot](assets/app-screenshot.png)
 
-A macOS desktop app to schedule system actions for specific times, including recurring schedules, update channels, and rollback support.
+LockPilot lets you schedule Mac actions at exact times, including recurring schedules.
 
-## Install on Mac
+## Download and Install
 Quick Start:
-- Stable (main): [Download latest release](https://github.com/maxacode/LockPilotMac/releases/latest)
-- Dev (dev): [Download latest dev prerelease](https://github.com/maxacode/LockPilotMac/releases/tag/dev-latest)
+- [Download latest stable release](https://github.com/maxacode/LockPilotMac/releases/latest)
 
-If you distribute an unsigned or non-notarized `.app`, macOS may block it with a "damaged and can't be opened" message.
+After download:
+1. Open the DMG.
+2. Drag `LockPilot.app` into `Applications`.
+3. Launch `LockPilot`.
 
-You can remove the quarantine flag manually:
+If macOS blocks launch with "damaged and can't be opened", run:
 
 ```bash
 sudo xattr -dr com.apple.quarantine "/Applications/LockPilot.app"
@@ -18,101 +20,57 @@ sudo xattr -dr com.apple.quarantine "/Applications/LockPilot.app"
 
 WARNING: This bypasses a Gatekeeper safety check and allows the app to run without notarization.
 
-WARNING: If your GitHub account/repository is compromised, an attacker could replace release assets with a malicious app.
-
-Recommendation: always ship signed + notarized releases for production distribution.
-
-## Features
-- Multiple concurrent timers
-- One-time timer execution
-- Actions:
+## What You Can Do
+- Create multiple timers
+- Actions per timer:
   - Popup message
   - Lock screen
   - Shut down
-  - Restart/reboot
-- Recurring schedules (Option 2):
+  - Restart
+- One-time and recurring schedules:
+  - One-time
   - Daily
   - Weekdays
   - Every N hours (1-24)
 - Cancel any active timer
-- Live timer list with next run time and countdown
-- Timer persistence to local app data and automatic restore on launch
-- In-app updater:
-  - Check now
-  - Auto-check on launch toggle
-  - Update channels: `main` (stable) and `dev` (prerelease)
-  - Install latest build from selected channel
-- Rollback:
-  - Select a specific release tag/version and install it
-- macOS-first UI refinements:
-  - Glass-inspired theme
-  - Narrow, borderless card style
-  - Subtle side accents
-- Custom app icon themed to lock + timer behavior
+- See active timers with next run time and live countdown
+- Keep timers after restart (timers are saved and restored on app launch)
+- Check for app updates in-app
+- Install latest update from selected channel
+- Roll back by installing a specific release version
 
-## Updater and Release Source
-LockPilot checks GitHub Releases from:
+## Recurring Timers (Simple Guide)
+In the timer form:
+1. Set action and trigger time.
+2. Pick `Repeat`:
+   - `One-time`
+   - `Daily`
+   - `Weekdays`
+   - `Every N Hours`
+3. If using `Every N Hours`, set interval hours.
+4. Click `Add Timer`.
 
-- `https://api.github.com/repos/maxacode/LockPilotMac/releases`
+## Updates and Rollback
+- Use `Check Now` in the Updates section.
+- Enable `Check for updates on launch` if desired.
+- To roll back, choose a release tag/version and install it.
 
-Channel mapping:
-
-- `main` channel -> stable releases (`prerelease=false`)
-- `dev` channel -> prereleases (`prerelease=true`)
-
-## macOS behavior notes
-- `Lock` uses a fallback chain:
-  - `Ctrl+Cmd+Q` lock shortcut via `System Events`
-  - current screen saver
+## macOS Notes
+- Lock action uses a fallback flow:
+  - `Ctrl+Cmd+Q`
+  - Start screen saver
   - `pmset displaysleepnow`
-- `Shutdown` and `Reboot` use AppleScript (`System Events`) and may require macOS permissions.
-- `Popup` uses AppleScript dialog.
+- Shutdown/Restart/Lock may require macOS permissions (`System Events`).
 
-## Timer Persistence
-Timers are saved to app data (`timers.json`) when created/updated/canceled and restored automatically on app launch.
+## Security Notes
+- If your GitHub repo/account is compromised, release assets could be replaced by malicious files.
+- Signed + notarized releases are strongly recommended for safer distribution.
 
-## Project Layout
-- `src-tauri/`: Rust backend + Tauri app config
-- `ui/`: static frontend (HTML/CSS/JS)
-
-## Dev Run (no JS framework required)
-1. Install Rust and cargo.
-2. Install Tauri CLI:
-   - `cargo install tauri-cli`
-3. In one terminal, serve the `ui/` folder:
-   - `python3 -m http.server 1420 --directory ui`
-4. In another terminal, run:
-   - `cd src-tauri`
-   - `cargo tauri dev`
-
-## Build
-From `src-tauri/`:
-
-- Build app: `cargo tauri build --bundles app`
-- Build dmg: `cargo tauri build --bundles dmg`
-
-Output bundles are under `src-tauri/target/release/bundle/`.
-
-## Changelog
-- `v0.4.0`:
+## What's New
+- `v0.4.1`
+  - Updated app icon and release polish.
+  - README aligned for end-user install/use.
+- `v0.4.0`
   - Added recurring timers (daily, weekdays, every N hours).
-  - Added persistent timer storage and auto-restore on app launch.
-  - Updated app icon to lock + timer themed design.
-  - Refined glass UI styling with narrower, borderless mac-style layout.
-- `v0.3.0`:
-  - Removed GitHub Actions workflow from the repository.
-  - Bumped app version to `0.3.0`.
-- `v0.2.2`:
-  - Added update channel support: `main` and `dev`.
-  - `main` channel checks stable GitHub releases.
-  - `dev` channel checks prerelease GitHub releases.
-  - Added install action for selected channel.
-  - Kept explicit rollback to any stable tag.
-- `v0.2.1`:
-  - Updated app/window title to `LockPilot - Made by Maks`.
-  - Bumped application version metadata.
-- `v0.2.0`:
-  - Added GitHub release update checks in-app.
-  - Added auto-check on launch toggle.
-  - Added install latest update flow.
-  - Added rollback flow with manual version selection.
+  - Added persistent timer storage and auto-restore on launch.
+  - Added glass-style UI refinements.
